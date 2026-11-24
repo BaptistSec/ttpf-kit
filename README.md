@@ -12,7 +12,7 @@ Command-line toolkit for `.ttpf` texture containers (RDS5 header, chunk table, E
 
 Exit codes: 0 ok, 1 verify found problems, 2 error (bad input, wrong base), 3 merge conflict.
 
-Pure Python 3, no dependencies, runs on Linux and Windows. `python run_tests.py` runs the tests.
+Pure Python 3, no dependencies. Tested on Linux, and on Windows Python 3.12 under Wine (not native Windows yet). `python run_tests.py` runs the tests.
 
 ## What it covers
 
