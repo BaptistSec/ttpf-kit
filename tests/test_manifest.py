@@ -4,7 +4,7 @@ from ttpf_kit import container as c, fixtures as f, manifest as mf, cli
 def _tree(variant):
     d = tempfile.mkdtemp(); os.makedirs(os.path.join(d, "sub"))
     base = f.sample(); t = c.parse(base)
-    open(os.path.join(d, "a.ttpf"), "wb").write(base if variant == 0 else c.replace_chunk(t, 2, zlib.compress(b"v2")))
+    open(os.path.join(d, "a.ttpf"), "wb").write(base if variant == 0 else c.replace_chunk(t, 2, f.zpad(b"v2")))
     open(os.path.join(d, "sub", "b.ttpf"), "wb").write(base)
     open(os.path.join(d, "junk.ttpf"), "wb").write(b"not a texture file")
     open(os.path.join(d, "notes.txt"), "wb").write(b"ignored")

@@ -22,6 +22,8 @@ Pure Python 3, no dependencies. Tested on Linux, and on Windows Python 3.12 unde
 
 Chunk table and descriptor parsing and writing. Chunk replacement keeps every other byte, including bits the notes don't explain, and rewrites only the chunk end offsets. Patches (`ttpf-patch/2`) hold both the old and new payload of each changed chunk with sha256 hashes, and are byte-identical for identical inputs. Apply checks the base hash, each chunk's old hash and the result hash, then runs `verify` on the result before anything is written. Writes go through a temp file and an atomic rename (`--in-place` keeps `FILE.bak`), and `--reverse` undoes a patch. Manifests are sorted, use forward-slash relative paths on every platform, and hold only hashes and texture descriptors, so two builds can be compared without sharing the files. `merge` combines edits to different chunks and stops with exit 3 if both sides changed the same chunk differently.
 
+Verify also checks that each zlib chunk unpacks to exactly the size the chunk table implies (difference of consecutive unpacked ends) and that raw chunks match their unpacked size. That reading follows ttpf-viewer's source and is untested on real files, so `apply` only refuses problems a patch introduces, never ones the input already had.
+
 ## What it does not cover
 
 BCPack chunks (codecs 1 to 7 on a chunk) are treated as opaque bytes. They can be swapped whole, not decoded or re-encoded. Mip rules, ETPF field C and some descriptor fields are not understood, so they are preserved, never regenerated.

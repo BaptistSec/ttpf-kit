@@ -67,7 +67,9 @@ def apply_patch(data: bytes, patch: dict) -> bytes:
         cur = c.replace_chunk(t, op["chunk"], base64.b64decode(op["new"]))
     if sha(cur) != patch["result_sha256"]:
         raise PatchError("result hash mismatch after applying")
-    problems = c.verify(c.parse(cur))
+    # only problems the patch introduced count: a base file the checks already flag must stay patchable
+    known = set(c.verify(c.parse(data)))
+    problems = [x for x in c.verify(c.parse(cur)) if x not in known]
     if problems:
         raise PatchError("result fails verification: " + "; ".join(problems[:3]))
     return cur

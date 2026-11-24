@@ -18,7 +18,7 @@ def test_replace_keeps_other_chunks_and_roundtrips():
     assert c.replace_chunk(t, 1, c.chunk_payload(t, 1)) == raw   # identity replace is byte exact
 
 def test_diff_apply_reverse_and_determinism():
-    a = f.sample(); b = c.replace_chunk(c.parse(a), 2, zlib.compress(b"hello" * 100))
+    a = f.sample(); b = c.replace_chunk(c.parse(a), 2, f.zpad(b"hello" * 100))
     patch = p.make_patch(a, b)
     assert p.dump_patch(patch) == p.dump_patch(p.make_patch(a, b))          # deterministic
     assert len(patch["ops"]) == 1 and p.apply_patch(a, patch) == b
@@ -27,7 +27,7 @@ def test_diff_apply_reverse_and_determinism():
     except p.PatchError: pass
 
 def test_corrupt_patch_rejected():
-    a = f.sample(); b = c.replace_chunk(c.parse(a), 2, zlib.compress(b"x" * 50))
+    a = f.sample(); b = c.replace_chunk(c.parse(a), 2, f.zpad(b"x" * 50))
     text = p.dump_patch(p.make_patch(a, b))
     p.load_patch(text)
     bad = text.replace('"new_sha256"', '"new_sha256x"', 1)
@@ -38,9 +38,9 @@ def test_corrupt_patch_rejected():
 def test_merge_clean_and_conflict():
     base = f.sample(); t = c.parse(base)
     left = c.replace_chunk(t, 1, bytes(range(16)) * 4 + b"L")
-    right = c.replace_chunk(t, 2, zlib.compress(b"right side"))
+    right = c.replace_chunk(t, 2, f.zpad(b"right side"))
     m = p.merge(base, left, right); tm = c.parse(m)
-    assert c.chunk_payload(tm, 1).startswith(bytes(range(16))) and zlib.decompress(c.chunk_payload(tm, 2).rstrip(b"\0")) == b"right side"
+    assert c.chunk_payload(tm, 1).startswith(bytes(range(16))) and zlib.decompress(c.chunk_payload(tm, 2).rstrip(b"\0")).rstrip(b"\0") == b"right side"
     assert p.merge(base, left, left) == left                                # same edit both sides is fine
     other = c.replace_chunk(t, 1, b"different")
     try: p.merge(base, left, other); assert False
@@ -56,8 +56,8 @@ def test_cli_apply_reverse_in_place_and_merge_exit_codes():
     d = tempfile.mkdtemp(); j = lambda n: os.path.join(d, n)
     base = f.sample(); t = c.parse(base)
     open(j("a"), "wb").write(base)
-    open(j("b"), "wb").write(c.replace_chunk(t, 2, zlib.compress(b"new")))
-    open(j("c"), "wb").write(c.replace_chunk(t, 2, zlib.compress(b"other")))
+    open(j("b"), "wb").write(c.replace_chunk(t, 2, f.zpad(b"new")))
+    open(j("c"), "wb").write(c.replace_chunk(t, 2, f.zpad(b"other")))
     assert cli.main(["diff", j("a"), j("b"), j("p")]) == 0
     assert cli.main(["apply", j("a"), j("p"), j("o"), ]) == 0 and open(j("o"), "rb").read() == open(j("b"), "rb").read()
     assert cli.main(["apply", j("a"), j("p"), "-", "--in-place"]) == 0 and os.path.exists(j("a.bak"))
@@ -83,3 +83,27 @@ def test_unknown_bits_survive_replace():
     assert t2.chunks[1].hi == hi | (0xABC << 20)
     assert t2.descriptors[0].raw[3] == 0xDEAD and t2.descriptors[0].raw[1] >> 20 & 3 == 3
     assert c.verify(t2) == []
+
+def test_verify_cross_checks_sizes():
+    base = f.sample(); t = c.parse(base)
+    assert c.verify(t) == []
+    short = c.replace_chunk(t, 2, zlib.compress(b"too short"))
+    assert any("chunk table says" in e for e in c.verify(c.parse(short)))
+    big = c.replace_chunk(t, 2, zlib.compress(bytes(0x5000)))
+    assert any("longer than" in e for e in c.verify(c.parse(big)))
+    trunc = c.replace_chunk(t, 2, f.zpad(b"abc")[:20])
+    assert c.verify(c.parse(trunc))
+    import struct
+    bad = bytearray(base); d = struct.unpack_from("<IIII", bad, 0x100 + 0x10)
+    struct.pack_into("<IIII", bad, 0x100 + 0x10, d[0], d[1], 0x100000, d[3])
+    assert any("past the end" in e for e in c.verify(c.parse(bytes(bad))))
+
+def test_apply_only_rejects_newly_introduced_problems():
+    t = c.parse(f.sample())
+    flawed = c.replace_chunk(t, 2, zlib.compress(b"short"))                  # base already fails verify
+    assert c.verify(c.parse(flawed))
+    fixed = c.replace_chunk(c.parse(flawed), 1, bytes(range(16)) * 4 + b"x")  # unrelated edit
+    assert p.apply_patch(flawed, p.make_patch(flawed, fixed)) == fixed
+    worse = c.replace_chunk(c.parse(f.sample()), 2, zlib.compress(b"short"))
+    try: p.apply_patch(f.sample(), p.make_patch(f.sample(), worse)); assert False
+    except p.PatchError as ex: assert "verification" in str(ex)

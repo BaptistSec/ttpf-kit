@@ -22,8 +22,12 @@ def make(descs, payloads, codecs):
         out += b.ljust(-(-len(b) // 0x100) * 0x100, b"\0")
     return out
 
+def zpad(data, size=0x4000):
+    """zlib stream that unpacks to exactly `size` bytes (the unpacked size the chunk table records)."""
+    return zlib.compress(data.ljust(size, b"\0"))
+
 def sample():
     bc7 = bytes(range(16)) * 4  # dummy 4 blocks
-    z = zlib.compress(bc7)
+    z = zpad(bc7)
     d = [Descriptor(8, 8, 98, 0, 0, 1, 1), Descriptor(16, 16, 71, 1, 1, 1, 2)]
     return make(d, [bc7, z], [7, 8])

@@ -126,9 +126,29 @@ def verify(t: Ttpf) -> list:
         if c.next_codec > 8: errs.append(f"chunk {i}: unknown next codec {c.next_codec}")
         prev_v = c.virt_end
     for i in range(1, len(t.chunks)):
-        if chunk_codec(t, i) == 8 and i < len(spans) and spans[i][1] <= len(raw):
-            try: zlib.decompressobj().decompress(chunk_payload(t, i))
-            except zlib.error as ex: errs.append(f"chunk {i}: bad zlib ({ex})")
+        s_, e_ = spans[i]
+        if e_ > len(raw) or e_ < s_:
+            continue
+        want = t.chunks[i].virt_end - t.chunks[i - 1].virt_end     # unpacked size of this chunk
+        if want < 0:
+            continue
+        codec = chunk_codec(t, i)
+        if codec == 8:
+            d = zlib.decompressobj()
+            try:
+                out = d.decompress(raw[s_:e_], want + 1)           # cap output: no zip bombs
+            except zlib.error as ex:
+                errs.append(f"chunk {i}: bad zlib ({ex})"); continue
+            if not d.eof: errs.append(f"chunk {i}: zlib stream is incomplete or longer than the {want} bytes the chunk table allows")
+            elif len(out) != want: errs.append(f"chunk {i}: zlib gives {len(out)} bytes, chunk table says {want}")
+        elif codec == 0 and (e_ - s_) != want:
+            errs.append(f"chunk {i}: raw chunk is {e_ - s_} bytes in the file but {want} unpacked")
+        # codecs 1..7 (BCPack) are opaque here: not checked
+    if t.chunks and t.descriptors:
+        top = t.chunks[-1].virt_end
+        for k, d in enumerate(t.descriptors):
+            if d.page * 0x1000 >= top:
+                errs.append(f"descriptor {k}: starts at {d.page * 0x1000:#x}, past the end of the unpacked data ({top:#x})")
     for k, d in enumerate(t.descriptors):
         if d.width < 1 or d.height < 1: errs.append(f"descriptor {k}: bad size")
     return errs
