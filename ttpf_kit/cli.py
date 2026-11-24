@@ -20,7 +20,7 @@ def main(argv=None):
             for i, (s, e) in enumerate(c.chunk_spans(t)):
                 print(f"chunk {i:4} {c.CODECS.get(c.chunk_codec(t, i), '?'):5} file {s:#x}-{e:#x} virt_end {t.chunks[i].virt_end:#x}")
             for k, ds in enumerate(t.descriptors):
-                print(f"tex {k:4} {ds.width}x{ds.height} dxgi {ds.dxgi} fmt {ds.fmt} mips {ds.mips} page {ds.page:#x}")
+                print(f"tex {k:4} {ds.width}x{ds.height} dxgi {ds.dxgi} mip_field {ds.mip_field} tile {ds.tile_mode} slices {ds.array_size} page {ds.page:#x}")
         elif o.cmd == "verify":
             errs = c.verify(c.parse(_read(o.file)))
             for e in errs: print("ERROR", e)

@@ -28,3 +28,17 @@ def test_cli_verify_and_info(tmp=None):
     d = tempfile.mkdtemp(); fp = os.path.join(d, "a.ttpf"); open(fp, "wb").write(f.sample())
     assert cli.main(["verify", fp]) == 0 and cli.main(["info", fp]) == 0
     assert cli.main(["verify", os.path.join(d, "missing")]) == 2
+
+def test_unknown_bits_survive_replace():
+    import struct
+    raw = bytearray(f.sample())
+    lo, hi = struct.unpack_from("<II", raw, 0x18 + 8)
+    struct.pack_into("<II", raw, 0x18 + 8, lo, hi | (0xABC << 20))      # bits 52..63 set (unknown in notes)
+    d0 = struct.unpack_from("<IIII", raw, 0x100 + 0x10)
+    struct.pack_into("<IIII", raw, 0x100 + 0x10, d0[0], d0[1] | (0x3 << 20), d0[2], 0xDEAD)  # unknown bits + u3
+    t = c.parse(bytes(raw))
+    out = c.replace_chunk(t, 2, c.chunk_payload(t, 2) + b"\0" * 0x100)
+    t2 = c.parse(out)
+    assert t2.chunks[1].hi == hi | (0xABC << 20)
+    assert t2.descriptors[0].raw[3] == 0xDEAD and t2.descriptors[0].raw[1] >> 20 & 3 == 3
+    assert c.verify(t2) == []

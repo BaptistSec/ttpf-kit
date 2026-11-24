@@ -25,5 +25,5 @@ def make(descs, payloads, codecs):
 def sample():
     bc7 = bytes(range(16)) * 4  # dummy 4 blocks
     z = zlib.compress(bc7)
-    d = [Descriptor(8, 8, 7, 98, 1, 1, 0), Descriptor(16, 16, 1, 71, 2, 2, 0)]
+    d = [Descriptor(8, 8, 98, 0, 0, 1, 1), Descriptor(16, 16, 71, 1, 1, 1, 2)]
     return make(d, [bc7, z], [7, 8])

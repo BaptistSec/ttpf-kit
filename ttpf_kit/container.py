@@ -10,16 +10,19 @@ class Chunk:
     file_end: int      # byte offset
     virt_end: int
     next_codec: int
+    lo: int = 0        # raw 8-byte entry words, kept so unknown bits survive a rewrite
+    hi: int = 0
 
 @dataclass
 class Descriptor:
     width: int
     height: int
-    fmt: int
     dxgi: int
-    mips: int
-    page: int
-    u3: int
+    mip_field: int     # u0 bits 28..31 (ttpf-viewer reading)
+    tile_mode: int     # u1 bits 24..27
+    array_size: int    # u1 bits 10..19, plus one
+    page: int          # u2 bits 0..20, times 0x1000 is the unpacked-stream offset
+    raw: tuple = (0, 0, 0, 0)
 
 @dataclass
 class Ttpf:
@@ -30,13 +33,16 @@ class Ttpf:
     etpf_c: int
     descriptors: list
     raw: bytes
+    header_pages: int = 1
 
 def _decode_entry(lo, hi):
     return Chunk((lo & 0x03FFFFFF) * 0x100,
                  (hi & 0xFFFFF) * 0x4000 + ((lo >> 30) & 3) * 0x1000,
-                 (lo >> 26) & 0xF)
+                 (lo >> 26) & 0xF, lo, hi)
 
 def _encode_entry(c):
+    if c.lo or c.hi:   # parsed entry: change only the file end, keep every other bit
+        return struct.pack("<II", (c.lo & ~0x03FFFFFF) | (c.file_end // 0x100), c.hi)
     pages, rem = divmod(c.virt_end, 0x4000)
     q = rem // 0x1000
     lo = (c.file_end // 0x100) | (c.next_codec << 26) | (q << 30)
@@ -53,15 +59,18 @@ def parse(data: bytes) -> Ttpf:
     a, b, c = struct.unpack_from("<III", data, off + 4)
     ds = []
     for i in range(b):
-        u0, u1, u2, u3 = struct.unpack_from("<IIII", data, off + 0x10 + 16 * i)
-        ds.append(Descriptor((u0 & 0x3FFF) + 1, ((u0 >> 14) & 0x3FFF) + 1, u1 & 7,
-                             (u1 >> 3) & 0x7F, u1 >> 24, u2 & 0xFFFFF, u3))
-    return Ttpf(f1, f2, chunks, a, c, ds, data)
+        w = struct.unpack_from("<IIII", data, off + 0x10 + 16 * i)
+        u0, u1, u2, _ = w
+        ds.append(Descriptor((u0 & 0x3FFF) + 1, ((u0 >> 14) & 0x3FFF) + 1, (u1 & 0x3FF) >> 3,
+                             u0 >> 28, (u1 >> 24) & 0xF, ((u1 >> 10) & 0x3FF) + 1, u2 & 0x1FFFFF, w))
+    return Ttpf(f1, f2, chunks, a, c, ds, data, hp)
 
 def _enc_desc(d):
-    u0 = (d.width - 1) | ((d.height - 1) << 14)
-    u1 = d.fmt | (d.dxgi << 3) | (d.mips << 24)
-    return struct.pack("<IIII", u0, u1, d.page, d.u3)
+    if any(d.raw):
+        return struct.pack("<IIII", *d.raw)
+    u0 = (d.width - 1) | ((d.height - 1) << 14) | (d.mip_field << 28)
+    u1 = (d.dxgi << 3) | ((d.array_size - 1) << 10) | (d.tile_mode << 24)
+    return struct.pack("<IIII", u0, u1, d.page, 0)
 
 def build_etpf(t: Ttpf) -> bytes:
     return b"ETPF" + struct.pack("<III", t.etpf_a, len(t.descriptors), t.etpf_c) + \
@@ -70,7 +79,7 @@ def build_etpf(t: Ttpf) -> bytes:
 
 def chunk_spans(t: Ttpf):
     """(start, end) file byte range for every chunk."""
-    start = ((t.raw.find(b"ETPF") ) // 0x100) * 0x100  # header pages end == ETPF start
+    start = t.header_pages * 0x100  # the ETPF block starts here
     out = []
     for c in t.chunks:
         out.append((start, c.file_end))
@@ -96,7 +105,7 @@ def replace_chunk(t: Ttpf, i: int, payload: bytes) -> bytes:
         blob = pad(payload) if j == i else t.raw[s:e]
         pos += len(blob)
         body += blob
-        entries.append(Chunk(pos, t.chunks[j].virt_end, t.chunks[j].next_codec))
+        entries.append(Chunk(pos, t.chunks[j].virt_end, t.chunks[j].next_codec, t.chunks[j].lo, t.chunks[j].hi))
     head = bytearray(t.raw[:hp_end])
     for j, e in enumerate(entries):
         head[0x18 + 8 * j:0x20 + 8 * j] = _encode_entry(e)
@@ -121,5 +130,5 @@ def verify(t: Ttpf) -> list:
             try: zlib.decompressobj().decompress(chunk_payload(t, i))
             except zlib.error as ex: errs.append(f"chunk {i}: bad zlib ({ex})")
     for k, d in enumerate(t.descriptors):
-        if d.mips < 1: errs.append(f"descriptor {k}: zero mips")
+        if d.width < 1 or d.height < 1: errs.append(f"descriptor {k}: bad size")
     return errs
