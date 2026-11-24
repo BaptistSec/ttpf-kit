@@ -1,9 +1,8 @@
-"""Synthetic clean-room fixtures: made-up payloads, no game data."""
+"""Synthetic files for tests. Made up; no game data."""
 import struct, zlib
 from .container import _encode_entry, Chunk, Descriptor, Ttpf, build_etpf
 
 def make(descs, payloads, codecs):
-    """descs: list[Descriptor]; payloads: list[bytes] (chunk 1..n); codecs: codec of each payload."""
     t = Ttpf(0, 0, [], 634, 0x4290, descs, b"")
     etpf = build_etpf(t)
     n = len(payloads) + 1

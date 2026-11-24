@@ -1,5 +1,4 @@
-"""Parse and write RDS5/ETPF containers. Layout from SentinelInteractive/0x52504639
-docs/ttpf-rds5-etpf.md (MIT, third-party notes, unverified by us)."""
+"""RDS5 header, chunk table and ETPF descriptors. Layout: see ttpf-spec, which marks what the community sources agree on."""
 import struct
 from dataclasses import dataclass
 
@@ -78,7 +77,6 @@ def build_etpf(t: Ttpf) -> bytes:
 
 
 def chunk_spans(t: Ttpf):
-    """(start, end) file byte range for every chunk."""
     start = t.header_pages * 0x100  # the ETPF block starts here
     out = []
     for c in t.chunks:
@@ -87,7 +85,7 @@ def chunk_spans(t: Ttpf):
     return out
 
 def chunk_codec(t: Ttpf, i: int) -> int:
-    """Codec of chunk i (chunk 0 is the ETPF block). Stored on entry i-1."""
+    # the codec of chunk i lives in table entry i-1; chunk 0 is the ETPF block
     return 0 if i == 0 else t.chunks[i - 1].next_codec
 
 def chunk_payload(t: Ttpf, i: int) -> bytes:
@@ -95,8 +93,7 @@ def chunk_payload(t: Ttpf, i: int) -> bytes:
     return t.raw[s:e]
 
 def replace_chunk(t: Ttpf, i: int, payload: bytes) -> bytes:
-    """Rebuild the file with chunk i replaced. Later chunk ends shift; virtual ends, codecs and
-    every other byte are kept. Payload is padded to 0x100."""
+    """Replace chunk i. Later file offsets shift; every other byte, including unknown bits, is kept."""
     spans = chunk_spans(t)
     hp_end = spans[0][0]
     pad = lambda b: b.ljust(-(-len(b) // 0x100) * 0x100, b"\0")
@@ -112,7 +109,6 @@ def replace_chunk(t: Ttpf, i: int, payload: bytes) -> bytes:
     return bytes(head) + body + t.raw[spans[-1][1]:]
 
 def verify(t: Ttpf) -> list:
-    """Return a list of problems (empty means structurally sane)."""
     import zlib
     errs, raw = [], t.raw
     spans = chunk_spans(t)

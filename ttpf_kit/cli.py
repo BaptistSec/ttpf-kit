@@ -1,5 +1,5 @@
 import argparse, os, sys, zlib
-from . import container as c, patch as p, manifest as mf
+from . import container as c, patch as p, manifest as mf, corpus as cp
 
 EXIT_ERROR, EXIT_CONFLICT, EXIT_VERIFY = 2, 3, 1
 
@@ -28,6 +28,8 @@ def main(argv=None):
     mm.add_argument("folder"); mm.add_argument("out")
     cc = sub.add_parser("compare", help="compare two manifests (two builds): added, removed, changed; exit 1 if anything differs")
     cc.add_argument("old"); cc.add_argument("new")
+    k = sub.add_parser("corpus", help="run all checks over a folder; prints counts and failure classes only (no file names unless --names)")
+    k.add_argument("folder"); k.add_argument("--names", action="store_true", help="also list file paths per failure class (local use)")
     o = ap.parse_args(argv)
     try:
         if o.cmd == "info":
@@ -66,6 +68,12 @@ def main(argv=None):
             r = mf.compare(mf.loads(_read(o.old).decode("utf-8")), mf.loads(_read(o.new).decode("utf-8")))
             print(mf.render(r))
             return 1 if (r["added"] or r["removed"] or r["changed"]) else 0
+        elif o.cmd == "corpus":
+            if not os.path.isdir(o.folder): raise OSError(f"not a folder: {o.folder}")
+            r = cp.run(o.folder, o.names); print(cp.render(r))
+            if o.names:
+                for cls, fl in r["names"].items(): print(f"[{cls}]"); [print("  " + x) for x in fl]
+            return 1 if r["files"] - r["ok"] else 0
         elif o.cmd == "merge":
             p.write_atomic(o.out, p.merge(_read(o.base), _read(o.left), _read(o.right)))
     except p.Conflict as ex:
