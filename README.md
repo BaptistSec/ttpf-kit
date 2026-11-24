@@ -4,6 +4,8 @@ Tools for working with the `.ttpf` texture databases that ship with GTA VI: chec
 
 It does not decode textures, and it does not touch the encrypted archives. There are good viewers for that already. This is for the other side of modding: knowing what changed between builds, and shipping a change without damaging the file.
 
+**Experimental. Tested only against synthetic files.** Nothing here has been run on a genuine `.ttpf`, and passing the tests says nothing about whether it works on arbitrary real files. The format notes it follows come from two community sources that disagree on several fields. Treat every result, including a clean `verify`, as unconfirmed, and keep a copy of anything you point it at.
+
 You need Python 3.10 or newer (tested on 3.10 and 3.12). There is nothing to install:
 
     python -m ttpf_kit verify textures.ttpf
@@ -46,7 +48,9 @@ Edits to different chunks merge. If both changed the same chunk differently it s
 
 ## Status
 
-The file layout comes from two community sources that disagree on a few fields, and so far the tool has only been run on synthetic files. It passes its tests on Linux and on Windows Python under Wine, not on native Windows yet. Expect `verify` to be wrong in places until it has met real files; `apply` only refuses problems a patch itself introduces, so it will not block a file that `verify` already complains about.
+Tests: 32, all synthetic. They pass on Linux, on Windows Python under Wine, and on native Windows 10 (the 20 tests in v0.5; the later hostile-input tests have run on Linux only so far). Synthetic fixtures establish that the code is self-consistent, not that it matches the real format. `verify` will be wrong in places until it has met real files; `apply` only refuses problems a patch itself introduces, so it will not block a file that `verify` already complains about.
+
+Bad input: truncated files, chunk or descriptor counts that run past the end of the file, chunk ends that go backwards or past the file, and malformed patches are refused with an error and exit code 2. Rewrites refuse any file whose chunk table cannot be trusted to cut it, and refuse a result whose offsets would not fit the table. Zlib chunks are unpacked with a size cap. Output goes through a temporary file in the same folder and is moved into place only when complete, so a failed write leaves the destination as it was; with `--in-place` the original is copied to `.bak` before the move. The backup copy itself is an ordinary copy, not atomic, but the original is never removed first.
 
 Compressed BCPack chunks are carried as opaque bytes. They can be replaced whole but not decoded or re-encoded. Fields nobody has explained are kept as raw words and written back unchanged.
 

@@ -18,7 +18,8 @@ def check_file(data: bytes) -> dict:
     for p in c.verify(t): r["fail"].append("verify: " + _cls(p))
     # round trip: replacing every chunk with itself must give the original bytes back
     try:
-        for i in range(len(t.chunks)):
+        n_ch = len(t.chunks)
+        for i in sorted({0, n_ch // 2, n_ch - 1}):   # first, middle, last: every chunk would be quadratic on big files
             if c.replace_chunk(t, i, c.chunk_payload(t, i)) != data:
                 r["fail"].append("roundtrip: identity replace changed bytes"); break
     except Exception as ex:
@@ -51,8 +52,12 @@ def run(root: str, names: bool = False) -> dict:
         dn.sort()
         for n in sorted(fn):
             if not n.lower().endswith(".ttpf"): continue
-            with open(os.path.join(dp, n), "rb") as fh: data = fh.read()
-            r = check_file(data); out["files"] += 1
+            try:
+                with open(os.path.join(dp, n), "rb") as fh: data = fh.read()
+                r = check_file(data)
+            except (OSError, MemoryError) as ex:
+                r = {"fail": ["unreadable: " + type(ex).__name__], "tally": {}, "codecs": {}, "dxgi": {}}
+            out["files"] += 1
             if not r["fail"]: out["ok"] += 1
             for f in set(r["fail"]):
                 out["classes"][f] += 1

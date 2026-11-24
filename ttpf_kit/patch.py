@@ -1,5 +1,5 @@
 """Deterministic, reversible chunk-payload patches with hash checks and 3-way merge."""
-import base64, hashlib, json, os, tempfile
+import base64, hashlib, json, os, shutil, tempfile
 from . import container as c
 
 FORMAT = "ttpf-patch/2"
@@ -39,10 +39,19 @@ def load_patch(text: str) -> dict:
         raise PatchError(f"unsupported patch format (want {FORMAT})")
     for k in ("base_sha256", "result_sha256", "ops"):
         if k not in p: raise PatchError(f"patch missing '{k}'")
+    if not isinstance(p["ops"], list):
+        raise PatchError("patch 'ops' is not a list")
     for op in p["ops"]:
+        if not isinstance(op, dict): raise PatchError("patch op is not an object")
         for k in ("chunk", "old_sha256", "new_sha256", "old", "new"):
             if k not in op: raise PatchError(f"patch op missing '{k}'")
-        if sha(base64.b64decode(op["old"])) != op["old_sha256"] or sha(base64.b64decode(op["new"])) != op["new_sha256"]:
+        if type(op["chunk"]) is not int or op["chunk"] < 0:
+            raise PatchError("patch op has an invalid chunk number")
+        try:
+            old, new = base64.b64decode(op["old"], validate=True), base64.b64decode(op["new"], validate=True)
+        except (ValueError, TypeError):
+            raise PatchError(f"patch op for chunk {op['chunk']} has invalid base64")
+        if sha(old) != op["old_sha256"] or sha(new) != op["new_sha256"]:
             raise PatchError(f"patch op for chunk {op['chunk']} is corrupt (payload hash mismatch)")
     return p
 
@@ -60,7 +69,7 @@ def apply_patch(data: bytes, patch: dict) -> bytes:
     cur = data
     for op in patch["ops"]:
         t = c.parse(cur)
-        if op["chunk"] >= len(t.chunks):
+        if not 0 <= op["chunk"] < len(t.chunks):
             raise PatchError(f"chunk {op['chunk']} does not exist")
         if sha(c.chunk_payload(t, op["chunk"])) != op["old_sha256"]:
             raise PatchError(f"chunk {op['chunk']} differs from what the patch expects")
@@ -94,16 +103,19 @@ def _with_result(base, ops):
 
 def write_atomic(path: str, data: bytes, backup: bool = False):
     """Write via a temp file in the same directory, then os.replace (atomic on Linux and Windows).
-    With backup=True an existing file is kept as path + '.bak' first."""
+    With backup=True an existing file is copied to path + '.bak' first, so the original is never
+    missing at any point. On any failure the temp file is removed and the destination is untouched."""
     d = os.path.dirname(os.path.abspath(path))
     fd, tmp = tempfile.mkstemp(dir=d, prefix=".ttpf-kit-")
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data); fh.flush(); os.fsync(fh.fileno())
+        if os.path.exists(path):
+            shutil.copymode(path, tmp)
+        else:
+            m = os.umask(0); os.umask(m); os.chmod(tmp, 0o666 & ~m)
         if backup and os.path.exists(path):
-            bak = path + ".bak"
-            if os.path.exists(bak): os.remove(bak)
-            os.replace(path, bak)
+            shutil.copyfile(path, path + ".bak"); shutil.copystat(path, path + ".bak")
         os.replace(tmp, path)
     except BaseException:
         if os.path.exists(tmp): os.remove(tmp)

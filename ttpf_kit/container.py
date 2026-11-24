@@ -4,6 +4,11 @@ from dataclasses import dataclass
 
 CODECS = {0: "RAW", 1: "BC1", 2: "BC2", 3: "BC3", 4: "BC4", 5: "BC5", 6: "BC6H", 7: "BC7", 8: "ZLIB"}
 
+class ParseError(ValueError):
+    """Input is not a container this code can safely read or rewrite."""
+
+MAX_FILE_END = 0x03FFFFFF * 0x100   # the file-end field is 26 bits of 0x100 units
+
 @dataclass
 class Chunk:
     file_end: int      # byte offset
@@ -48,21 +53,29 @@ def _encode_entry(c):
     return struct.pack("<II", lo, pages)
 
 def parse(data: bytes) -> Ttpf:
-    if data[:4] != b"RDS5":
-        raise ValueError("not RDS5")
+    if len(data) < 0x18 or data[:4] != b"RDS5":
+        raise ParseError("not RDS5")
     n, f1, f2, hp = struct.unpack_from("<IIII", data, 4)
+    if n < 1:
+        raise ParseError("chunk table is empty")
+    if 0x18 + 8 * n > len(data):
+        raise ParseError(f"chunk table ({n} entries) runs past the end of the file")
     chunks = [_decode_entry(*struct.unpack_from("<II", data, 0x18 + 8 * i)) for i in range(n)]
     off = hp * 0x100
+    if off + 0x10 > len(data):
+        raise ParseError("ETPF block starts past the end of the file")
     if data[off:off + 4] != b"ETPF":
-        raise ValueError("ETPF block not found")
-    a, b, c = struct.unpack_from("<III", data, off + 4)
+        raise ParseError("ETPF block not found")
+    a, b, cc = struct.unpack_from("<III", data, off + 4)
+    if off + 0x10 + 16 * b > len(data):
+        raise ParseError(f"ETPF descriptor table ({b} entries) runs past the end of the file")
     ds = []
     for i in range(b):
         w = struct.unpack_from("<IIII", data, off + 0x10 + 16 * i)
         u0, u1, u2, _ = w
         ds.append(Descriptor((u0 & 0x3FFF) + 1, ((u0 >> 14) & 0x3FFF) + 1, (u1 & 0x3FF) >> 3,
                              u0 >> 28, (u1 >> 24) & 0xF, ((u1 >> 10) & 0x3FF) + 1, u2 & 0x1FFFFF, w))
-    return Ttpf(f1, f2, chunks, a, c, ds, data, hp)
+    return Ttpf(f1, f2, chunks, a, cc, ds, data, hp)
 
 def _enc_desc(d):
     if any(d.raw):
@@ -88,19 +101,41 @@ def chunk_codec(t: Ttpf, i: int) -> int:
     # the codec of chunk i lives in table entry i-1; chunk 0 is the ETPF block
     return 0 if i == 0 else t.chunks[i - 1].next_codec
 
+def layout_errors(t: Ttpf):
+    """Raise if the chunk table cannot be trusted to cut the file: rewrites and extraction refuse such files."""
+    prev = t.header_pages * 0x100
+    if prev < 0x18 + 8 * len(t.chunks):
+        raise ParseError("chunk table overlaps the ETPF block")
+    for i, ch in enumerate(t.chunks):
+        if ch.file_end < prev:
+            raise ParseError(f"chunk {i}: file end {ch.file_end:#x} is before its start {prev:#x}")
+        if ch.file_end > len(t.raw):
+            raise ParseError(f"chunk {i}: file end {ch.file_end:#x} is past the end of the file ({len(t.raw):#x})")
+        prev = ch.file_end
+
 def chunk_payload(t: Ttpf, i: int) -> bytes:
+    if not 0 <= i < len(t.chunks):
+        raise ParseError(f"chunk {i} does not exist (file has {len(t.chunks)})")
+    layout_errors(t)
     s, e = chunk_spans(t)[i]
     return t.raw[s:e]
 
 def replace_chunk(t: Ttpf, i: int, payload: bytes) -> bytes:
     """Replace chunk i. Later file offsets shift; every other byte, including unknown bits, is kept."""
     spans = chunk_spans(t)
+    if not 0 <= i < len(spans):
+        raise ParseError(f"chunk {i} does not exist (file has {len(spans)})")
+    layout_errors(t)
+    if i == 0 and payload[:4] != b"ETPF":
+        raise ParseError("chunk 0 holds the ETPF block; a replacement must start with ETPF")
     hp_end = spans[0][0]
     pad = lambda b: b.ljust(-(-len(b) // 0x100) * 0x100, b"\0")
     body, entries, pos = b"", [], hp_end
     for j, (s, e) in enumerate(spans):
         blob = pad(payload) if j == i else t.raw[s:e]
         pos += len(blob)
+        if pos > MAX_FILE_END:
+            raise ParseError("result would exceed the largest file offset the chunk table can hold")
         body += blob
         entries.append(Chunk(pos, t.chunks[j].virt_end, t.chunks[j].next_codec, t.chunks[j].lo, t.chunks[j].hi))
     head = bytearray(t.raw[:hp_end])
@@ -112,8 +147,12 @@ def verify(t: Ttpf) -> list:
     import zlib
     errs, raw = [], t.raw
     spans = chunk_spans(t)
-    if spans[0][0] % 0x100:
-        errs.append("header not 0x100 aligned")
+    if spans[0][0] < 0x18 + 8 * len(t.chunks):
+        errs.append("chunk table overlaps the ETPF block")
+    if t.chunks and t.chunks[-1].file_end < len(raw):
+        errs.append(f"{len(raw) - t.chunks[-1].file_end} byte(s) after the last chunk")
+    if t.chunks and spans[0][0] + 0x10 + 16 * len(t.descriptors) > t.chunks[0].file_end:
+        errs.append("ETPF descriptor table runs past chunk 0")
     prev_e, prev_v = spans[0][0], 0
     for i, ((s, e), c) in enumerate(zip(spans, t.chunks)):
         if e < s: errs.append(f"chunk {i}: end before start")

@@ -46,7 +46,11 @@ def main(argv=None):
             return EXIT_VERIFY if errs else 0
         elif o.cmd == "extract":
             t = c.parse(_read(o.file)); b = c.chunk_payload(t, o.chunk)
-            if c.chunk_codec(t, o.chunk) == 8: b = zlib.decompressobj().decompress(b)
+            if c.chunk_codec(t, o.chunk) == 8:
+                want = t.chunks[o.chunk].virt_end - t.chunks[o.chunk - 1].virt_end if o.chunk else 0
+                d = zlib.decompressobj(); b = d.decompress(b, max(want, 0) + 1)
+                if not d.eof or len(b) != want:
+                    raise ValueError("zlib chunk does not decompress to the size the chunk table gives")
             p.write_atomic(o.out, b)
         elif o.cmd == "replace":
             t = c.parse(_read(o.file)); b = _read(o.payload)
@@ -78,7 +82,7 @@ def main(argv=None):
             p.write_atomic(o.out, p.merge(_read(o.base), _read(o.left), _read(o.right)))
     except p.Conflict as ex:
         print("conflict:", ex, file=sys.stderr); return EXIT_CONFLICT
-    except (ValueError, OSError, zlib.error, IndexError, KeyError, UnicodeDecodeError) as ex:
+    except (ValueError, OSError, zlib.error) as ex:
         print("error:", ex, file=sys.stderr); return EXIT_ERROR
     except Exception as ex:   # struct.error and friends on malformed input
         print("error: malformed input:", ex, file=sys.stderr); return EXIT_ERROR
