@@ -1,5 +1,5 @@
-import argparse, sys, zlib
-from . import container as c, patch as p
+import argparse, os, sys, zlib
+from . import container as c, patch as p, manifest as mf
 
 EXIT_ERROR, EXIT_CONFLICT, EXIT_VERIFY = 2, 3, 1
 
@@ -24,6 +24,10 @@ def main(argv=None):
     a.add_argument("--in-place", action="store_true", help="overwrite FILE (keeps FILE.bak); OUT is ignored")
     m = sub.add_parser("merge", help="3-way merge of two edited copies of a base; exit 3 on conflict")
     m.add_argument("base"); m.add_argument("left"); m.add_argument("right"); m.add_argument("out")
+    mm = sub.add_parser("manifest", help="hash every .ttpf under a folder into a manifest (hashes only)")
+    mm.add_argument("folder"); mm.add_argument("out")
+    cc = sub.add_parser("compare", help="compare two manifests (two builds): added, removed, changed; exit 1 if anything differs")
+    cc.add_argument("old"); cc.add_argument("new")
     o = ap.parse_args(argv)
     try:
         if o.cmd == "info":
@@ -54,6 +58,14 @@ def main(argv=None):
             res = p.apply_patch(_read(o.file), patch)
             if o.in_place: p.write_atomic(o.file, res, backup=True)
             else: p.write_atomic(o.out, res)
+        elif o.cmd == "manifest":
+            if not os.path.isdir(o.folder): raise OSError(f"not a folder: {o.folder}")
+            m = mf.build(o.folder); p.write_atomic(o.out, mf.dumps(m).encode())
+            print(f"{len(m['files'])} file(s) recorded")
+        elif o.cmd == "compare":
+            r = mf.compare(mf.loads(_read(o.old).decode("utf-8")), mf.loads(_read(o.new).decode("utf-8")))
+            print(mf.render(r))
+            return 1 if (r["added"] or r["removed"] or r["changed"]) else 0
         elif o.cmd == "merge":
             p.write_atomic(o.out, p.merge(_read(o.base), _read(o.left), _read(o.right)))
     except p.Conflict as ex:
