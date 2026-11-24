@@ -56,4 +56,6 @@ Compressed BCPack chunks are carried as opaque bytes. They can be replaced whole
 
 `info`, `extract` and `replace` do what their names say. Run the tests with `python run_tests.py`.
 
+For viewers and extractors that read these files, see the [GTA 6 tools directory](https://baptistsec.github.io/gta6-tools/), which lists what each tool does and does not do.
+
 MIT licence. No game files are included, and you should not add any to this repository.
