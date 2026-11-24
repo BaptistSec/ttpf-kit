@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.bak
+.ttpf-kit-*
+results.txt
+.vscode/
+.idea/
+*.egg-info/
+dist/
+build/

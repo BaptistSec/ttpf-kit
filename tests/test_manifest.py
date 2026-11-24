@@ -16,12 +16,12 @@ def test_manifest_deterministic_and_relative_keys():
     m1, m2 = mf.build(d), mf.build(d)
     assert mf.dumps(m1) == mf.dumps(m2)
     assert sorted(m1["files"]) == ["a.ttpf", "junk.ttpf", "sub/b.ttpf"]
-    assert "unparsed" in m1["files"]["junk.ttpf"] and "chunks" in m1["files"]["a.ttpf"]
+    assert "unparsed" in m1["files"]["junk.ttpf"] and "parts" in m1["files"]["a.ttpf"] and m1["files"]["a.ttpf"]["kind"] == "ttpf"
 
 def test_compare_reports_chunk_level_change():
     r = mf.compare(mf.build(_tree(0)), mf.build(_tree(1)))
     assert r["added"] == ["new.ttpf"] and r["removed"] == []
-    assert list(r["changed"]) == ["a.ttpf"] and r["changed"]["a.ttpf"]["chunks_changed"] == [2]
+    assert list(r["changed"]) == ["a.ttpf"] and r["changed"]["a.ttpf"]["parts_changed"] == [2]
     assert sorted(r["unchanged"]) == ["junk.ttpf", "sub/b.ttpf"]
 
 def test_manifest_cli_roundtrip_and_exit_codes():
@@ -32,3 +32,18 @@ def test_manifest_cli_roundtrip_and_exit_codes():
     assert cli.main(["compare", j("m0"), j("m1")]) == 1
     assert cli.main(["compare", j("m0"), j("missing")]) == 2
     assert cli.main(["manifest", j("nope"), j("x")]) == 2
+
+def test_legacy_manifest_loads_and_new_handlers_plug_in():
+    import json
+    legacy = {"format": "ttpf-manifest/1", "files": {"a.ttpf": {"sha256": "x", "size": 1, "chunks": ["h1"], "textures": [[1, 1, 2, 0, 1, 3]]}}}
+    m = mf.loads(json.dumps(legacy))
+    assert m["files"]["a.ttpf"]["parts"] == ["h1"] and m["files"]["a.ttpf"]["kind"] == "ttpf"
+    # a second format registered through HANDLERS shows up and compares with the same machinery
+    mf.HANDLERS[".demo"] = ("demo", lambda b: {"parts": [mf._sha(b[i:i + 4]) for i in range(0, len(b), 4)], "meta": []})
+    try:
+        d = tempfile.mkdtemp(); open(os.path.join(d, "x.demo"), "wb").write(b"aaaabbbbcccc")
+        e = tempfile.mkdtemp(); open(os.path.join(e, "x.demo"), "wb").write(b"aaaaBBBBcccc")
+        r = mf.compare(mf.build(d), mf.build(e))
+        assert r["changed"]["x.demo"]["parts_changed"] == [1]
+    finally:
+        del mf.HANDLERS[".demo"]
