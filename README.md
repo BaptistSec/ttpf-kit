@@ -4,7 +4,7 @@ Tools for working with the `.ttpf` texture databases that ship with GTA VI: chec
 
 It does not decode textures, and it does not touch the encrypted archives. There are good viewers for that already. This is for the other side of modding: knowing what changed between builds, and shipping a change without damaging the file.
 
-You need Python 3.9 or newer. There is nothing to install:
+You need Python 3.10 or newer (tested on 3.10 and 3.12). There is nothing to install:
 
     python -m ttpf_kit verify textures.ttpf
 
