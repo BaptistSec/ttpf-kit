@@ -3,17 +3,20 @@
 Command-line toolkit for `.ttpf` texture containers (RDS5 header, chunk table, ETPF descriptors).
 
     python -m ttpf_kit info file.ttpf
-    python -m ttpf_kit verify file.ttpf
+    python -m ttpf_kit verify file.ttpf                      # exit 1 if problems
     python -m ttpf_kit extract file.ttpf 3 out.bin
     python -m ttpf_kit replace file.ttpf 3 new.bin out.ttpf [--zlib]
-    python -m ttpf_kit diff old.ttpf new.ttpf change.json
-    python -m ttpf_kit apply old.ttpf change.json new.ttpf
+    python -m ttpf_kit diff old.ttpf new.ttpf change.json    # deterministic, reversible
+    python -m ttpf_kit apply old.ttpf change.json new.ttpf [--reverse | --in-place]
+    python -m ttpf_kit merge base.ttpf mine.ttpf theirs.ttpf merged.ttpf   # exit 3 on conflict
+
+Exit codes: 0 ok, 1 verify found problems, 2 error (bad input, wrong base), 3 merge conflict.
 
 Pure Python 3, no dependencies, runs on Linux and Windows. `python run_tests.py` runs the tests.
 
 ## What it covers
 
-Chunk table and descriptor parsing and writing. Chunk replacement keeps every other byte, including bits the notes don't explain, and rewrites only the chunk end offsets. Patches record the base hash, per-chunk hashes and the result hash, so applying to the wrong file fails.
+Chunk table and descriptor parsing and writing. Chunk replacement keeps every other byte, including bits the notes don't explain, and rewrites only the chunk end offsets. Patches (`ttpf-patch/2`) hold both the old and new payload of each changed chunk with sha256 hashes, and are byte-identical for identical inputs. Apply checks the base hash, each chunk's old hash and the result hash, then runs `verify` on the result before anything is written. Writes go through a temp file and an atomic rename (`--in-place` keeps `FILE.bak`), and `--reverse` undoes a patch. `merge` combines edits to different chunks and stops with exit 3 if both sides changed the same chunk differently.
 
 ## What it does not cover
 
